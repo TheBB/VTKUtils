@@ -6,7 +6,7 @@ from distutils.extension import Extension
 
 setup(
     name='VTKUtils',
-    version='1.0.3',
+    version='0.1.0',
     description='Various CLI tools for manipulating VTK files.',
     maintainer='Eivind Fonn',
     maintainer_email='eivind.fonn@sintef.no',
