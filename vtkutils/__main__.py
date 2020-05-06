@@ -10,9 +10,9 @@ from vtk.util.numpy_support import numpy_to_vtk
 
 def load_vtk(filename):
     reader = vtk.vtkDataSetReader()
-    reader.SetFileName('Re10_000_vorticity_zNormal.vtk')
+    reader.SetFileName(filename)
     reader.Update()
-    return reader
+    return reader.GetOutput()
 
 
 def _make_linspace(vmin, vmax, npts):
@@ -21,12 +21,13 @@ def _make_linspace(vmin, vmax, npts):
     return np.linspace(vmin, vmax, npts)
 
 
-def _cartesify(filename, reader, xpts, ypts, zpts):
-    xmin, xmax, ymin, ymax, zmin, zmax = reader.GetOutput().GetBounds()
+def _extract_and_cartesify(data, bbox, shape):
+    xmin, xmax, ymin, ymax, zmin, zmax = bbox
 
-    xvalues = _make_linspace(xmin, xmax, xpts)
-    yvalues = _make_linspace(ymin, ymax, ypts)
-    zvalues = _make_linspace(zmin, zmax, zpts)
+    # Create one-dimensional grids
+    xvalues = _make_linspace(xmin, xmax, shape[0])
+    yvalues = _make_linspace(ymin, ymax, shape[1])
+    zvalues = _make_linspace(zmin, zmax, shape[2])
     final_shape = tuple(len(k) for k in (xvalues, yvalues, zvalues) if len(k) > 1)
 
     # Create a cartesian grid
@@ -42,7 +43,7 @@ def _cartesify(filename, reader, xpts, ypts, zpts):
 
     # Create a vtkProbeFilter for interpolating
     probefilter = vtk.vtkProbeFilter()
-    probefilter.SetSourceConnection(reader.GetOutputPort())
+    probefilter.SetSourceData(data)
     probefilter.SetInputData(grid)
     probefilter.Update()
 
@@ -62,23 +63,49 @@ def _cartesify(filename, reader, xpts, ypts, zpts):
     output = np.zeros(final_shape, dtype=datatype)
     for key in struct.PointData.keys():
         output[key] = struct.PointData[key].reshape(output[key].shape)
+    return output
 
-    np.save(filename, output)
+
+def cartesify(data, shape):
+    return _extract_and_cartesify(data, data.GetBounds(), shape)
+
+
+def cutplane(data, point, normal, shape):
+    xmin, xmax, ymin, ymax, zmin, zmax = data.GetBounds()
+    if normal == 'x':
+        xmin = xmax = point
+    elif normal == 'y':
+        ymin = ymax = point
+    elif normal == 'z':
+        zmin = zmax = point
+    return _extract_and_cartesify(data, (xmin, xmax, ymin, ymax, zmin, zmax), shape)
 
 
 @click.group()
 def main():
-    """VTK command-line utilities"""
+    """VTK command-line utilities."""
     pass
 
 
 @main.command('cartesify')
-@click.option('--xpts', '-x', default=20, help='Number of points in x-direction')
-@click.option('--ypts', '-y', default=20, help='Number of points in y-direction')
-@click.option('--zpts', '-z', default=20, help='Number of points in z-direction')
+@click.option('--shape', default=(20, 20, 20), nargs=3, type=int, help='Shape of resulting array')
 @click.argument('filenames', type=click.Path(exists=True, dir_okay=False, readable=True), nargs=-1)
-def cartesify(xpts, ypts, zpts, filenames):
+def _cartesify(shape, filenames):
     """Convert data to cartesian grid and output as npy."""
     for filename in filenames:
         grid = load_vtk(filename)
-        _cartesify(Path(filename).with_suffix('.npy'), grid, xpts, ypts, zpts)
+        output = cartesify(grid, shape)
+        np.save(Path(filename).with_suffix('.npy'), output)
+
+
+@main.command('cutplane')
+@click.option('--normal', '-n', type=click.Choice(['x', 'y', 'z'], case_sensitive=False), help='Normal plane direction')
+@click.option('--point', '-p', default=0.0, type=float, help='A coordinate in the normal direction')
+@click.option('--shape', default=(20, 20, 20), nargs=3, type=int, help='Shape of resulting array')
+@click.argument('filenames', type=click.Path(exists=True, dir_okay=False, readable=True), nargs=-1)
+def _cutplane(point, normal, shape, filenames):
+    """Extract a cutting plane from 3D data."""
+    for filename in filenames:
+        grid = load_vtk(filename)
+        output = cutplane(grid, point, normal, shape)
+        np.save(Path(filename).with_suffix('.npy'), output)
